@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+#
+# This script looks through the local file system for files and/or directories that are larger than the given argument. 
+# It can be used to find likely items to delete when you are running out of disk space.
+#
+import os
+import argparse
+import sys
+
+BigFiles = {}
+BigDirs = {}
+
+#----
+# Read the command line for arguments
+#
+def ParseArgs():
+    parser = argparse.ArgumentParser(description="Find large files or directories")
+
+#    parser.add_argument('-s', "--size", help="Minimum size of object", type=int,default=100)
+    parser.add_argument('-s', "--size", help="Minimum size of object",default=100)    
+    parser.add_argument('-f', "--files", help="Look for files", action='store_true')
+    parser.add_argument('-d', "--dirs", help="Look for directories", action='store_true')
+    parser.add_argument('-p', "--path", help="Starting point for search", default="/")    
+
+    args = parser.parse_args()
+
+    return(args.size, args.files, args.dirs, args.path)
+#-----
+# The script prints the size of the objects in a human friendly format. That is 1024 bytes == 1K and 1048576 bytes = 1M.
+# So, we divide the size by 1024 until the result is less than 1024. Then give it a suffix and print it a 3.1 format.
+#
+def sizeof_fmt(num, suffix=""):
+    for unit in ["", "K", "M", "G", "T", "P", "E", "Z"]:
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}Yi{suffix}"
+#----
+#
+# Convert 'size' if it uses human friendly syntax. Look at the last character in 'size' and if it is one of the Units, then
+# remove it and multiply size my 1024 to the exponent of the Unit. Otherwise, throw an error.
+#
+def ConvertSize(size):
+    Units = {'K': 1, 'M': 2, 'G': 3, 'T': 4, 'P': 5, 'E': 6, 'Z': 7, 'Y': 8}
+    if size.isdigit():
+        return int(size)
+    elif size[-1] in ['K', 'M', 'G', 'T', 'P' 'E', 'Z', 'Y']:
+        i = size[-1]
+        size = size[:-1]
+        size = int(size)
+        size = size * 1024 ** Units[i]
+#        print(f'Size: {size}, index: {i} Units: {Units[i]}')
+        return size
+    print(f"Error in size: {size}")
+    sys.exit()
+    
+#----
+# This routine scans a directory. It totals the size of all the files in the directory and makes a note of any files that are
+# larger than the size limit we are looking for. If the entry is a directory, then recursivly call itself. Make a note of any
+# directories that are larger than the size limit we are looking for. 
+#
+def get_dir_size(path='.'):
+    total = 0 
+
+#   Some files/directories are owned by root and can't be read. So, skip them...
+    if os.access(path, os.R_OK|os.X_OK):
+#       print(f"Scandir: can read and execute entry.path {path}")
+        pass
+    else:
+#        print(f"Scandir: can NOT read {path}")
+        return 0
+
+    with os.scandir(path) as it:
+        for entry in it:
+            
+            if entry.is_file(follow_symlinks=False):
+                total += entry.stat().st_size
+#                print("File: ", entry.path, " size: ", entry.stat().st_size, "Total: ", total)
+                if (files and entry.stat().st_size >= size):
+                    BigFiles[entry.path] = entry.stat().st_size
+            elif entry.is_dir(follow_symlinks=False):
+                total += get_dir_size(entry.path)
+            else:
+#                print(f"Skip: {entry.path}")
+                continue
+#    print("Size: ", total, " Path: ", entry.path, " Total: ", total)            
+    
+    if (dirs and total >= size):
+        BigDirs[path] = total        
+#    print("Size: ", total, " Path: ", path, " Total: ", total)                
+
+    return total
+
+#----
+# Main part. Convert the command line given size to an integer, if needed. Then call get_dir_size to scan the file system starting
+# a 'path'.
+#
+if __name__ == '__main__':
+    InSize, files, dirs, path = ParseArgs()
+
+    size = int(ConvertSize(InSize))
+
+    get_dir_size(path)    
+
+    if files:
+        print(f"Files greater than {InSize}")
+        for f in sorted(BigFiles, key=BigFiles.get):        
+            print(sizeof_fmt(BigFiles[f]), f)
+    if dirs:
+        print(f"Directories greater than {InSize}")        
+        for d in sorted(BigDirs, key=BigDirs.get):        
+            print(sizeof_fmt(BigDirs[d]), d)
